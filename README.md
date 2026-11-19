@@ -31,6 +31,11 @@ Google sign-in requires `GOOGLE_CLIENT_ID`. Stripe Checkout requires
 async payment succeeded, and async payment failed events. Configure
 `STRIPE_CURRENCY` for a currency supported by the Stripe account.
 
+For local Stripe testing, run `stripe listen --forward-to localhost:5000/api/payments/webhook`
+and set `STRIPE_WEBHOOK_SECRET` to the
+signing secret printed by the CLI. This API uses Stripe-hosted Checkout, so a
+publishable key is not required by the backend.
+
 ## Scripts
 
 - `npm run dev` — start with Node's watch mode
@@ -44,6 +49,7 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
+| GET | `/` | Public | API service status and health-check path |
 | GET | `/api/health` | Public | Health check |
 | POST | `/api/auth/register` | Public | Register a customer |
 | POST | `/api/auth/login` | Public | Email/password login |

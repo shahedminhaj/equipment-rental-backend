@@ -29,6 +29,14 @@ app.post("/api/payments/webhook", express.raw({ type: "application/json" }), (re
 });
 app.use(express.json({ limit: "1mb" }));
 
+app.get("/", (_request, response) => {
+  response.json({
+    service: "equipment-rental-api",
+    status: "ok",
+    health: "/api/health",
+  });
+});
+
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
 });

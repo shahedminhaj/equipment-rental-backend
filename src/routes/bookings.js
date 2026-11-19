@@ -195,12 +195,69 @@ router.post("/", verifyRenter, asyncHandler(async (request, response) => {
   }
 }));
 
+router.post("/:id/cancel-checkout", verifyRenter, asyncHandler(async (request, response) => {
+  const id = parseObjectId(request.params.id, "booking id");
+  const bookings = getDatabase().collection("bookings");
+  const booking = await bookings.findOne({ _id: id, customerId: request.user._id });
+  if (!booking) return response.status(404).json({ message: "Booking not found" });
+  if (booking.paymentStatus === "paid") {
+    return response.status(409).json({ message: "A paid booking cannot be cancelled from checkout" });
+  }
+  if (booking.paymentStatus === "failed" && booking.bookingStatus === "cancelled") {
+    return response.json({ booking: toPublicDocument(booking) });
+  }
+  if (booking.paymentStatus !== "pending") {
+    return response.status(409).json({ message: "This checkout can no longer be cancelled" });
+  }
+
+  if (booking.checkoutSessionId) {
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.retrieve(booking.checkoutSessionId);
+    if (session.payment_status === "paid" || session.status === "complete") {
+      return response.status(409).json({ message: "Payment is complete or still processing" });
+    }
+    if (session.status === "open") {
+      await stripe.checkout.sessions.expire(session.id);
+    }
+  }
+
+  await bookings.updateOne(
+    { _id: id, customerId: request.user._id, paymentStatus: "pending" },
+    { $set: {
+      paymentStatus: "failed",
+      bookingStatus: "cancelled",
+      updatedAt: new Date(),
+    } },
+  );
+  const updated = await bookings.findOne({ _id: id, customerId: request.user._id });
+  if (updated?.paymentStatus === "paid") {
+    return response.status(409).json({ message: "Payment completed before checkout could be cancelled" });
+  }
+  if (!updated || updated.paymentStatus !== "failed" || updated.bookingStatus !== "cancelled") {
+    return response.status(409).json({ message: "Checkout status changed; refresh and try again" });
+  }
+  return response.json({ booking: toPublicDocument(updated) });
+}));
+
 router.get("/mine", verifyRenter, asyncHandler(async (request, response) => {
   const bookings = await getDatabase().collection("bookings")
     .find({ customerId: request.user._id })
     .sort({ createdAt: -1 })
     .toArray();
   response.json({ items: await hydrateBookings(bookings) });
+}));
+
+router.get("/checkout/:sessionId", verifyRenter, asyncHandler(async (request, response) => {
+  const { sessionId } = request.params;
+  if (!sessionId.startsWith("cs_") || sessionId.length > 255) {
+    return response.status(400).json({ message: "Invalid checkout session id" });
+  }
+  const booking = await getDatabase().collection("bookings").findOne({
+    checkoutSessionId: sessionId,
+    customerId: request.user._id,
+  });
+  if (!booking) return response.status(404).json({ message: "Booking not found" });
+  response.json({ booking: toPublicDocument(booking) });
 }));
 
 router.get("/owner", verifyOwner, asyncHandler(async (request, response) => {

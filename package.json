@@ -12,6 +12,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@stripe/stripe-js": "^10.3.0",
     "bcryptjs": "^2.4.3",
     "better-auth": "^1.7.26",
     "cors": "^2.8.5",
@@ -22,6 +23,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.12.0",
-    "stripe": "^17.5.0"
+    "next": "^16.4.6",
+    "stripe": "^17.7.0"
   }
 }
