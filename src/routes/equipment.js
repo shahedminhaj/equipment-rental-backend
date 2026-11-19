@@ -140,29 +140,51 @@ router.post("/", verifyOwner, asyncHandler(async (request, response) => {
 router.patch("/:id", [...authenticate, asyncHandler(async (request, response) => {
   const id = parseObjectId(request.params.id, "equipment id");
   const equipmentCollection = getDatabase().collection("equipment");
-  const existing = await equipmentCollection.findOne({ _id: id });
-  if (!existing) return response.status(404).json({ message: "Equipment not found" });
-  if (request.user.role !== "admin" &&
-      (request.user.role !== "owner" || !existing.ownerId.equals(request.user._id))) {
-    return response.status(403).json({ message: "You cannot update this equipment" });
+  const lockToken = await acquireReservationLock(id);
+  if (!lockToken) {
+    return response.status(409).json({ message: "Equipment is being booked; try again shortly" });
   }
-  validateEquipment(request.body, true);
-  const changes = sanitizeEquipmentInput(request.body);
-  if (request.user.role !== "admin" && Object.hasOwn(request.body, "status")) {
-    return response.status(403).json({ message: "Only administrators can change approval status" });
-  }
-  if (request.user.role === "admin" && request.body.status !== undefined) {
-    if (!EQUIPMENT_STATUSES.includes(request.body.status)) {
-      return response.status(400).json({ message: "Invalid equipment status" });
+  try {
+    const existing = await equipmentCollection.findOne({ _id: id });
+    if (!existing) return response.status(404).json({ message: "Equipment not found" });
+    if (request.user.role !== "admin" &&
+        (request.user.role !== "owner" || !existing.ownerId.equals(request.user._id))) {
+      return response.status(403).json({ message: "You cannot update this equipment" });
     }
-    changes.status = request.body.status;
+    validateEquipment(request.body, true);
+    const changes = sanitizeEquipmentInput(request.body);
+    if (request.user.role !== "admin" && Object.hasOwn(request.body, "status")) {
+      return response.status(403).json({ message: "Only administrators can change approval status" });
+    }
+    if (request.user.role === "admin" && request.body.status !== undefined) {
+      if (!EQUIPMENT_STATUSES.includes(request.body.status)) {
+        return response.status(400).json({ message: "Invalid equipment status" });
+      }
+      changes.status = request.body.status;
+    }
+    if (changes.availableQuantity < existing.availableQuantity) {
+      const activeBooking = await getDatabase().collection("bookings").findOne({
+        equipmentId: id,
+        $or: [
+          { paymentStatus: "paid", bookingStatus: { $in: ["pending", "confirmed"] } },
+          { paymentStatus: "pending", checkoutExpiresAt: { $gt: new Date() } },
+        ],
+      }, { projection: { _id: 1 } });
+      if (activeBooking) {
+        return response.status(409).json({
+          message: "Available quantity cannot be reduced while this equipment has active bookings",
+        });
+      }
+    }
+    const updated = await equipmentCollection.findOneAndUpdate(
+      { _id: id },
+      { $set: { ...changes, updatedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+    return response.json({ item: toPublicDocument(updated) });
+  } finally {
+    await releaseReservationLock(id, lockToken);
   }
-  const updated = await equipmentCollection.findOneAndUpdate(
-    { _id: id },
-    { $set: { ...changes, updatedAt: new Date() } },
-    { returnDocument: "after" },
-  );
-  response.json({ item: toPublicDocument(updated) });
 })]);
 
 router.delete("/:id", [...authenticate, asyncHandler(async (request, response) => {

@@ -24,17 +24,19 @@ To provision an administrator on startup, configure both `ADMIN_EMAIL` and
 credentials private and unset them after provisioning if the deployment does
 not require automatic provisioning.
 
-Google sign-in requires `GOOGLE_CLIENT_ID`. Stripe Checkout requires
-`STRIPE_SECRET_KEY` and webhook signature verification requires
-`STRIPE_WEBHOOK_SECRET`. Point the Stripe webhook at
-`/api/payments/webhook` and subscribe to Checkout Session completed, expired,
-async payment succeeded, and async payment failed events. Configure
-`STRIPE_CURRENCY` for a currency supported by the Stripe account.
+Google sign-in requires `GOOGLE_CLIENT_ID`. Set the same OAuth client ID as
+`NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend. This uses Google Identity
+Services ID-token verification; authorize the frontend JavaScript origin
+(`http://localhost:3000`) in Google Cloud. No redirect URI is used.
 
-For local Stripe testing, run `stripe listen --forward-to localhost:5000/api/payments/webhook`
-and set `STRIPE_WEBHOOK_SECRET` to the
-signing secret printed by the CLI. This API uses Stripe-hosted Checkout, so a
-publishable key is not required by the backend.
+Stripe Checkout requires `STRIPE_SECRET_KEY`. Card payments are verified
+server-side when the signed-in renter returns to the success page, so a local
+webhook listener and `STRIPE_WEBHOOK_SECRET` are not required for basic testing.
+Webhooks are recommended for production so payments are recorded even if the
+renter does not return to the site. For local webhook testing, run
+`stripe listen --forward-to localhost:5000/api/payments/webhook`, then set
+`STRIPE_WEBHOOK_SECRET` to the signing secret printed by the CLI. Configure
+`STRIPE_CURRENCY` for a currency supported by the Stripe account.
 
 ## Scripts
 
@@ -65,6 +67,8 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | GET/PATCH | `/api/profile` | Signed in | View or update profile |
 | POST | `/api/bookings` | Customer | Create booking and Stripe Checkout session |
 | GET | `/api/bookings/mine` | Customer | Customer's bookings |
+| GET | `/api/bookings/checkout/:sessionId` | Customer | Payment status for the signed-in renter's checkout |
+| POST | `/api/bookings/:id/cancel-checkout` | Customer | Expire checkout and release its reservation |
 | GET | `/api/bookings/owner` | Owner | Rentals for owner's listings |
 | GET | `/api/bookings/admin` | Admin | All bookings |
 | PATCH | `/api/bookings/:id/status` | Owner/Admin | Manage a paid booking |

@@ -157,6 +157,7 @@ router.post("/", verifyRenter, asyncHandler(async (request, response) => {
 
     const session = await getStripe().checkout.sessions.create({
       mode: "payment",
+      payment_method_types: ["card"],
       customer_email: request.user.email,
       line_items: [{
         quantity: 1,
@@ -252,12 +253,62 @@ router.get("/checkout/:sessionId", verifyRenter, asyncHandler(async (request, re
   if (!sessionId.startsWith("cs_") || sessionId.length > 255) {
     return response.status(400).json({ message: "Invalid checkout session id" });
   }
-  const booking = await getDatabase().collection("bookings").findOne({
+  const bookings = getDatabase().collection("bookings");
+  const booking = await bookings.findOne({
     checkoutSessionId: sessionId,
     customerId: request.user._id,
   });
   if (!booking) return response.status(404).json({ message: "Booking not found" });
-  response.json({ booking: toPublicDocument(booking) });
+
+  const session = await getStripe().checkout.sessions.retrieve(sessionId);
+  if (
+    session.metadata?.bookingId !== booking._id.toString() ||
+    session.amount_total !== booking.totalAmount * 100 ||
+    session.currency !== booking.currency ||
+    session.id !== booking.checkoutSessionId
+  ) {
+    return response.status(400).json({ message: "Stripe Checkout does not match this booking" });
+  }
+
+  if (session.status === "complete" && session.payment_status === "paid") {
+    if (booking.paymentStatus === "failed" || booking.bookingStatus === "cancelled") {
+      return response.status(409).json({ message: "This booking was cancelled before payment confirmation" });
+    }
+    const paidAt = booking.paidAt || new Date();
+    await bookings.updateOne(
+      { _id: booking._id, paymentStatus: "pending" },
+      { $set: {
+        paymentStatus: "paid",
+        paidAt,
+        updatedAt: new Date(),
+      } },
+    );
+    await getDatabase().collection("payments").updateOne(
+      { checkoutSessionId: session.id },
+      { $setOnInsert: {
+        bookingId: booking._id,
+        checkoutSessionId: session.id,
+        paymentIntentId: session.payment_intent,
+        amount: session.amount_total,
+        currency: session.currency,
+        status: "paid",
+        createdAt: paidAt,
+      } },
+      { upsert: true },
+    );
+  } else if (session.status === "expired") {
+    await bookings.updateOne(
+      { _id: booking._id, paymentStatus: "pending" },
+      { $set: {
+        paymentStatus: "failed",
+        bookingStatus: "cancelled",
+        updatedAt: new Date(),
+      } },
+    );
+  }
+
+  const updatedBooking = await bookings.findOne({ _id: booking._id });
+  response.json({ booking: toPublicDocument(updatedBooking) });
 }));
 
 router.get("/owner", verifyOwner, asyncHandler(async (request, response) => {
