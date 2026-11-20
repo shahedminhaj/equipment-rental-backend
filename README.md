@@ -31,6 +31,12 @@ Admin; the startup migration demotes any extra Admin roles. Keep the
 credentials private. The legacy `/api/auth/admin/setup` endpoints remain for
 compatibility but are no longer needed.
 
+When the `equipment` collection is empty, startup seeds twelve approved demo
+listings from a verified demo owner so the public catalog, featured section,
+admin analytics, and owner tools have meaningful data immediately. Seeding is
+idempotent: existing catalog data is never overwritten. A daily job also marks
+paid rentals as completed after their end date passes.
+
 Google sign-in requires `GOOGLE_CLIENT_ID`. Set the same OAuth client ID as
 `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend. This uses Google Identity
 Services ID-token verification; authorize the frontend JavaScript origin
