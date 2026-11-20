@@ -2,9 +2,9 @@ const { getDatabase } = require("./db");
 
 const DAY_IN_MS = 86_400_000;
 
-async function completeExpiredBookings() {
+async function completeExpiredBookings(database = getDatabase()) {
   const today = new Date().toISOString().slice(0, 10);
-  const result = await getDatabase().collection("bookings").updateMany(
+  const result = await database.collection("bookings").updateMany(
     {
       rentalEndDate: { $lt: today },
       paymentStatus: "paid",
