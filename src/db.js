@@ -40,6 +40,8 @@ async function connectToDatabase() {
       database.collection("bookings").createIndex({ customerId: 1, createdAt: -1 }),
       database.collection("bookings").createIndex({ ownerId: 1, createdAt: -1 }),
       database.collection("equipment").createIndex({ status: 1, createdAt: -1 }),
+      database.collection("equipment").createIndex({ status: 1, category: 1, rentalType: 1 }),
+      database.collection("equipment").createIndex({ status: 1, location: 1 }),
       database.collection("payments").createIndex(
         { checkoutSessionId: 1 },
         { unique: true, sparse: true },
