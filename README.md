@@ -22,15 +22,14 @@ in either setting, MongoDB's default database may be selected. The API listens
 on port 5000 by default. Set `CLIENT_URL` to the frontend origin; multiple
 origins can be comma-separated.
 
-For the first Admin, configure both `ADMIN_EMAIL` and `ADMIN_PASSWORD` (at
-least six characters), then open the frontend's `/dashboard` route and select
-**Set up the first admin**. The setup endpoint accepts only those exact
-configured credentials, creates or promotes that account, and is closed once
-an Admin exists. Public registration and Google sign-in always create customer
-accounts. A unique partial MongoDB index enforces one Admin; the startup
-migration demotes any extra Admin roles. Startup synchronizes the configured
-password only when that Admin already exists; it does not silently create an
-Admin. Keep the credentials private.
+For the Admin, configure both `ADMIN_EMAIL` and `ADMIN_PASSWORD` (at least six
+characters). On startup the server creates or promotes that exact account and
+syncs its password, so the credentials can be used on the normal
+`/api/auth/login` route immediately. Public registration and Google sign-in
+always create customer accounts. A unique partial MongoDB index enforces one
+Admin; the startup migration demotes any extra Admin roles. Keep the
+credentials private. The legacy `/api/auth/admin/setup` endpoints remain for
+compatibility but are no longer needed.
 
 Google sign-in requires `GOOGLE_CLIENT_ID`. Set the same OAuth client ID as
 `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend. This uses Google Identity
