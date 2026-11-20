@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+
+process.env.MONGODB_URI ||= "mongodb://localhost:27017/equipment-rental-test";
+process.env.JWT_SECRET ||= "d".repeat(32);
+
 const { completeExpiredBookings } = require("../src/jobs");
 
 test("expired paid bookings are completed automatically", async () => {

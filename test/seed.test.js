@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+
+process.env.MONGODB_URI ||= "mongodb://localhost:27017/equipment-rental-test";
+process.env.JWT_SECRET ||= "c".repeat(32);
+
 const { SAMPLE_EQUIPMENT, DEMO_OWNER_EMAIL } = require("../src/seed");
 
 test("the demo catalog covers every requested category", () => {
