@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const config = require("./config");
 const configRoutes = require("./routes/config");
+const { getDatabase } = require("./db");
 const authRoutes = require("./routes/auth");
 const equipmentRoutes = require("./routes/equipment");
 const favoriteRoutes = require("./routes/favorites");
@@ -38,8 +39,13 @@ app.get("/", (_request, response) => {
   });
 });
 
-app.get("/api/health", (_request, response) => {
-  response.json({ status: "ok" });
+app.get("/api/health", async (_request, response) => {
+  try {
+    await getDatabase().admin().ping();
+    return response.json({ status: "ok", database: "connected" });
+  } catch {
+    return response.status(503).json({ status: "unavailable", database: "disconnected" });
+  }
 });
 
 app.use("/api/config", configRoutes);
