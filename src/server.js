@@ -1,37 +1,25 @@
 require("dotenv").config();
 
-const bcrypt = require("bcryptjs");
 const app = require("./app");
 const config = require("./config");
 const { closeDatabase, connectToDatabase } = require("./db");
-
-async function synchronizeConfiguredAdmin() {
-  if (!config.adminEmail && !config.adminPassword) return;
-  if (!config.adminEmail || !config.adminPassword) {
-    throw new Error("Set both ADMIN_EMAIL and ADMIN_PASSWORD to configure the administrator");
-  }
-  if (config.adminPassword.length < 6) {
-    throw new Error("ADMIN_PASSWORD must be at least 6 characters long");
-  }
-  const users = (await connectToDatabase()).collection("users");
-  const admin = await users.findOne({ email: config.adminEmail, role: "admin" });
-  if (!admin) return;
-
-  const passwordHash = await bcrypt.hash(config.adminPassword, 12);
-  await users.updateOne(
-    { _id: admin._id },
-    { $set: { passwordHash, disabled: false, updatedAt: new Date() } },
-  );
-}
+const { startStatusJobs } = require("./jobs");
+const { ensureConfiguredAdmin, seedCatalog } = require("./seed");
 
 async function start() {
-  await connectToDatabase();
-  await synchronizeConfiguredAdmin();
+  const database = await connectToDatabase();
+  const admin = await ensureConfiguredAdmin(database);
+  const seededItems = await seedCatalog(database);
+  const statusJob = startStatusJobs();
+
   const server = app.listen(config.port, () => {
     console.log(`Equipment rental API listening on port ${config.port}`);
+    if (admin) console.log(`Administrator ready: ${admin.email}`);
+    if (seededItems) console.log(`Seeded ${seededItems} approved demo listings`);
   });
 
   async function shutdown() {
+    clearInterval(statusJob);
     server.close(async () => {
       await closeDatabase();
       process.exit(0);

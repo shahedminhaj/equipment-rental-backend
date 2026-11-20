@@ -98,6 +98,16 @@ router.get("/featured", asyncHandler(async (_request, response) => {
   response.json({ items: items.map(toPublicDocument) });
 }));
 
+router.get("/categories", asyncHandler(async (_request, response) => {
+  const categories = await getDatabase().collection("equipment").aggregate([
+    { $match: { status: "approved" } },
+    { $group: { _id: "$category", count: { $sum: 1 } } },
+    { $project: { _id: 0, name: "$_id", count: 1 } },
+    { $sort: { name: 1 } },
+  ]).toArray();
+  response.json({ items: categories });
+}));
+
 router.get("/owner/mine", verifyOwner, asyncHandler(async (request, response) => {
   const items = await getDatabase().collection("equipment")
     .find({ ownerId: request.user._id })
