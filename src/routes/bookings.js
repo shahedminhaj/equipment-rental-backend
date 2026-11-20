@@ -75,6 +75,36 @@ async function countReservedQuantity(equipmentId, startDate, endDate) {
   return overlaps.reduce((total, booking) => total + booking.quantity, 0);
 }
 
+router.post("/quote", asyncHandler(async (request, response) => {
+  const {
+    equipmentId: equipmentIdValue,
+    rentalStartDate,
+    rentalEndDate,
+    quantity,
+  } = request.body || {};
+  const equipmentId = parseObjectId(equipmentIdValue, "equipment id");
+  if (!Number.isSafeInteger(quantity) || quantity < 1) {
+    return response.status(400).json({ message: "Quantity must be a positive whole number" });
+  }
+  const equipment = await getDatabase().collection("equipment").findOne({
+    _id: equipmentId,
+    status: "approved",
+  }, { projection: { name: 1, price: 1, rentalType: 1, availableQuantity: 1 } });
+  if (!equipment) return response.status(404).json({ message: "Equipment not found" });
+  if (quantity > equipment.availableQuantity) {
+    return response.status(409).json({ message: "Requested quantity is not available" });
+  }
+  const units = rentalUnits(rentalStartDate, rentalEndDate, equipment.rentalType);
+  const totalAmount = units * equipment.price * quantity;
+  return response.json({
+    units,
+    unitPrice: equipment.price,
+    quantity,
+    totalAmount,
+    currency: config.stripeCurrency,
+  });
+}));
+
 router.post("/", verifyRenter, asyncHandler(async (request, response) => {
   const {
     equipmentId: equipmentIdValue,
