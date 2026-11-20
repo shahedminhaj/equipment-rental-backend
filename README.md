@@ -16,13 +16,21 @@ npm run dev
 ```
 
 Set the values in `.env` before starting the server. `MONGODB_URI` and a
-32-character `JWT_SECRET` are required. The API listens on port 5000 by default.
-Set `CLIENT_URL` to the frontend origin; multiple origins can be comma-separated.
+32-character `JWT_SECRET` are required. Set `MONGODB_DB=fieldkit` to isolate
+Fieldkit data from other projects on the same cluster; without a database name
+in either setting, MongoDB's default database may be selected. The API listens
+on port 5000 by default. Set `CLIENT_URL` to the frontend origin; multiple
+origins can be comma-separated.
 
-To provision an administrator on startup, configure both `ADMIN_EMAIL` and
-`ADMIN_PASSWORD`. The configured email is assigned the admin role; keep these
-credentials private and unset them after provisioning if the deployment does
-not require automatic provisioning.
+For the first Admin, configure both `ADMIN_EMAIL` and `ADMIN_PASSWORD` (at
+least six characters), then open the frontend's `/dashboard` route and select
+**Set up the first admin**. The setup endpoint accepts only those exact
+configured credentials, creates or promotes that account, and is closed once
+an Admin exists. Public registration and Google sign-in always create customer
+accounts. A unique partial MongoDB index enforces one Admin; the startup
+migration demotes any extra Admin roles. Startup synchronizes the configured
+password only when that Admin already exists; it does not silently create an
+Admin. Keep the credentials private.
 
 Google sign-in requires `GOOGLE_CLIENT_ID`. Set the same OAuth client ID as
 `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend. This uses Google Identity
@@ -56,6 +64,8 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | POST | `/api/auth/register` | Public | Register a customer |
 | POST | `/api/auth/login` | Public | Email/password login |
 | POST | `/api/auth/google` | Public | Verify a Google ID token; new accounts are customers |
+| GET | `/api/auth/admin/setup-status` | Public | Check whether first-admin setup is available |
+| POST | `/api/auth/admin/setup` | Public, rate-limited | Create the one configured Admin account |
 | GET | `/api/auth/me` | Signed in | Current user |
 | GET | `/api/equipment` | Public | Search, filter, sort, paginate approved listings |
 | GET | `/api/equipment/featured` | Public | Six latest approved listings |
@@ -76,7 +86,7 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | GET | `/api/payments/mine` | Customer | Customer's payment transactions |
 | GET | `/api/payments/admin` | Admin | All payment transactions |
 | GET | `/api/admin/users` | Admin | Paginated user management |
-| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer, owner, or admin role |
+| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer or owner role; Admin creation is reserved for setup |
 | PATCH | `/api/admin/users/:id/status` | Admin | Enable or disable a user |
 | GET | `/api/admin/equipment` | Admin | Review all listings |
 | PATCH | `/api/admin/equipment/:id/status` | Admin | Approve or reject a listing |

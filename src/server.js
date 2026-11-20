@@ -5,37 +5,28 @@ const app = require("./app");
 const config = require("./config");
 const { closeDatabase, connectToDatabase } = require("./db");
 
-async function ensureConfiguredAdmin() {
+async function synchronizeConfiguredAdmin() {
   if (!config.adminEmail && !config.adminPassword) return;
   if (!config.adminEmail || !config.adminPassword) {
-    throw new Error("Set both ADMIN_EMAIL and ADMIN_PASSWORD to provision the administrator");
+    throw new Error("Set both ADMIN_EMAIL and ADMIN_PASSWORD to configure the administrator");
   }
   if (config.adminPassword.length < 6) {
     throw new Error("ADMIN_PASSWORD must be at least 6 characters long");
   }
   const users = (await connectToDatabase()).collection("users");
+  const admin = await users.findOne({ email: config.adminEmail, role: "admin" });
+  if (!admin) return;
+
+  const passwordHash = await bcrypt.hash(config.adminPassword, 12);
   await users.updateOne(
-    { email: config.adminEmail },
-    {
-      $set: { role: "admin", updatedAt: new Date() },
-      $setOnInsert: {
-        name: "Administrator",
-        email: config.adminEmail,
-        passwordHash: await bcrypt.hash(config.adminPassword, 12),
-        photo: "",
-        phone: "",
-        address: "",
-        provider: "password",
-        createdAt: new Date(),
-      },
-    },
-    { upsert: true },
+    { _id: admin._id },
+    { $set: { passwordHash, disabled: false, updatedAt: new Date() } },
   );
 }
 
 async function start() {
   await connectToDatabase();
-  await ensureConfiguredAdmin();
+  await synchronizeConfiguredAdmin();
   const server = app.listen(config.port, () => {
     console.log(`Equipment rental API listening on port ${config.port}`);
   });

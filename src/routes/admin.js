@@ -2,6 +2,7 @@ const { Router } = require("express");
 const { getDatabase } = require("../db");
 const { asyncHandler, parseObjectId, verifyAdmin } = require("../middleware");
 const { pagination, ROLES, toPublicDocument } = require("../domain");
+const config = require("../config");
 
 const router = Router();
 
@@ -30,7 +31,21 @@ router.patch("/users/:id/role", verifyAdmin, asyncHandler(async (request, respon
   const id = parseObjectId(request.params.id, "user id");
   const { role } = request.body || {};
   if (!ROLES.includes(role)) return response.status(400).json({ message: "Invalid user role" });
-  const user = await getDatabase().collection("users").findOneAndUpdate(
+  if (role === "admin") {
+    return response.status(400).json({ message: "Admin access is provisioned from the server environment" });
+  }
+  if (id.equals(request.user._id)) {
+    return response.status(400).json({ message: "You cannot change your own role" });
+  }
+
+  const users = getDatabase().collection("users");
+  const existingUser = await users.findOne({ _id: id }, { projection: { email: 1 } });
+  if (!existingUser) return response.status(404).json({ message: "User not found" });
+  if (config.adminEmail && existingUser.email === config.adminEmail) {
+    return response.status(400).json({ message: "The configured administrator role cannot be changed" });
+  }
+
+  const user = await users.findOneAndUpdate(
     { _id: id },
     { $set: { role, updatedAt: new Date() } },
     { returnDocument: "after", projection: { passwordHash: 0 } },
