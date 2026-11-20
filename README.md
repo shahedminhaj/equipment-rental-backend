@@ -94,7 +94,7 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | GET | `/api/payments/mine` | Customer | Customer's payment transactions |
 | GET | `/api/payments/admin` | Admin | All payment transactions |
 | GET | `/api/admin/users` | Admin | Paginated user management |
-| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer or owner role; Admin creation is reserved for setup |
+| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer or owner role; Admin is provisioned from environment |
 | PATCH | `/api/admin/users/:id/status` | Admin | Enable or disable a user |
 | GET | `/api/admin/equipment` | Admin | Review all listings |
 | PATCH | `/api/admin/equipment/:id/status` | Admin | Approve or reject a listing |
@@ -125,8 +125,10 @@ includes `items`, `total`, `page`, `limit`, and `pages`.
 
 The backend calculates the total from the approved listing's current price,
 checks overlapping reservations, creates a pending booking, and returns a
-`checkoutUrl`. The booking's payment status and the `payments` collection are
-updated only after a verified Stripe webhook.
+`checkoutUrl`. Payment is confirmed on the signed-in renter's return through
+`GET /api/bookings/checkout/:sessionId`, which retrieves the Stripe session
+server-side, and may also be confirmed by a verified Stripe webhook. Both paths
+update the booking payment status and the `payments` collection idempotently.
 
 ## Frontend integration
 
