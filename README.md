@@ -65,7 +65,8 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
 | GET | `/` | Public | API service status and health-check path |
-| GET | `/api/health` | Public | Health check |
+| GET | `/api/health` | Public | Health check including MongoDB connectivity |
+| GET | `/api/config` | Public | Public currency and enabled sign-in/payment features |
 | POST | `/api/auth/register` | Public | Register a customer |
 | POST | `/api/auth/login` | Public | Email/password login |
 | POST | `/api/auth/google` | Public | Verify a Google ID token; new accounts are customers |
@@ -74,12 +75,14 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | GET | `/api/auth/me` | Signed in | Current user |
 | GET | `/api/equipment` | Public | Search, filter, sort, paginate approved listings |
 | GET | `/api/equipment/featured` | Public | Six latest approved listings |
+| GET | `/api/equipment/categories` | Public | Approved categories with listing counts |
 | GET | `/api/equipment/:id` | Public | Approved listing details and owner |
 | POST | `/api/equipment` | Owner | Create a pending listing |
 | GET | `/api/equipment/owner/mine` | Owner | Owner's listings |
 | PATCH/DELETE | `/api/equipment/:id` | Owner/Admin | Update or delete a listing |
 | GET/POST/DELETE | `/api/favorites[/:equipmentId]` | Customer | List, add, or remove favorites |
 | GET/PATCH | `/api/profile` | Signed in | View or update profile |
+| POST | `/api/bookings/quote` | Public | Authoritative rental total for the selected dates and quantity |
 | POST | `/api/bookings` | Customer | Create booking and Stripe Checkout session |
 | GET | `/api/bookings/mine` | Customer | Customer's bookings |
 | GET | `/api/bookings/checkout/:sessionId` | Customer | Payment status for the signed-in renter's checkout |
