@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const config = require("./config");
+const configRoutes = require("./routes/config");
 const authRoutes = require("./routes/auth");
 const equipmentRoutes = require("./routes/equipment");
 const favoriteRoutes = require("./routes/favorites");
@@ -40,6 +41,8 @@ app.get("/", (_request, response) => {
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
 });
+
+app.use("/api/config", configRoutes);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
