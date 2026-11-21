@@ -31,18 +31,21 @@ router.patch("/users/:id/role", verifyAdmin, asyncHandler(async (request, respon
   const id = parseObjectId(request.params.id, "user id");
   const { role } = request.body || {};
   if (!ROLES.includes(role)) return response.status(400).json({ message: "Invalid user role" });
-  if (role === "admin") {
-    return response.status(400).json({ message: "Admin access is provisioned from the server environment" });
-  }
   if (id.equals(request.user._id)) {
     return response.status(400).json({ message: "You cannot change your own role" });
   }
 
   const users = getDatabase().collection("users");
-  const existingUser = await users.findOne({ _id: id }, { projection: { email: 1 } });
+  const existingUser = await users.findOne({ _id: id }, { projection: { email: 1, role: 1 } });
   if (!existingUser) return response.status(404).json({ message: "User not found" });
   if (config.adminEmail && existingUser.email === config.adminEmail) {
     return response.status(400).json({ message: "The configured administrator role cannot be changed" });
+  }
+  if (role === "admin") {
+    const currentAdmin = await users.findOne({ role: "admin", _id: { $ne: id } }, { projection: { _id: 1 } });
+    if (currentAdmin) {
+      return response.status(409).json({ message: "Another admin already exists. Demote the current admin first." });
+    }
   }
 
   const user = await users.findOneAndUpdate(
