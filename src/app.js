@@ -17,13 +17,36 @@ const paymentRoutes = require("./routes/payments");
 const app = express();
 const allowedOrigins = config.clientUrl.split(",").map((origin) => origin.trim()).filter(Boolean);
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+
+  try {
+    const requestOrigin = new URL(origin);
+    return allowedOrigins.some((allowed) => {
+      try {
+        const allowedOrigin = new URL(allowed);
+        const samePort = requestOrigin.port === allowedOrigin.port;
+        const sameProtocol = requestOrigin.protocol === allowedOrigin.protocol;
+        const localPair =
+          ["localhost", "127.0.0.1"].includes(requestOrigin.hostname) &&
+          ["localhost", "127.0.0.1"].includes(allowedOrigin.hostname);
+        return sameProtocol && samePort && localPair;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(null, false);
+    return callback(null, isAllowedOrigin(origin));
   },
 }));
 
