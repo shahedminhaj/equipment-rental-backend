@@ -22,7 +22,7 @@ function toMonthlySeries(rows, valueKey) {
   return monthKeys().map((month) => ({ month, [valueKey]: values.get(month) || 0 }));
 }
 
-async function paidBookingRevenuePipeline({ ownerId, since, includeMonthly = false } = {}) {
+function paidBookingRevenuePipeline({ ownerId, since, includeMonthly = false } = {}) {
   const match = { status: "paid" };
   if (since) match.createdAt = { $gte: since };
   return [
