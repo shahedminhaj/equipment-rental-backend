@@ -88,6 +88,50 @@ router.get("/equipment", verifyAdmin, asyncHandler(async (request, response) => 
   response.json({ items: items.map(toPublicDocument), total, page, limit, pages: Math.ceil(total / limit) });
 }));
 
+router.post("/equipment", verifyAdmin, asyncHandler(async (request, response) => {
+  const body = request.body || {};
+  const requiredText = ["name", "category", "location", "image"];
+  if (requiredText.some((field) => typeof body[field] !== "string" || !body[field].trim() || body[field].length > 2048)) {
+    return response.status(400).json({ message: "Name, category, location, and image URL are required" });
+  }
+  if (!Number.isSafeInteger(body.price) || body.price <= 0) {
+    return response.status(400).json({ message: "Price must be a positive whole number" });
+  }
+  if (!["Daily", "Weekly", "Monthly"].includes(body.rentalType)) {
+    return response.status(400).json({ message: "Invalid rental type" });
+  }
+  if (!Number.isSafeInteger(body.availableQuantity) || body.availableQuantity < 0) {
+    return response.status(400).json({ message: "Available quantity must be a non-negative whole number" });
+  }
+  for (const field of ["description", "condition", "brand", "model"]) {
+    if (body[field] !== undefined && (typeof body[field] !== "string" || body[field].length > 5000)) {
+      return response.status(400).json({ message: `${field} must be text no longer than 5000 characters` });
+    }
+  }
+
+  const now = new Date();
+  const item = {
+    name: body.name.trim(),
+    description: typeof body.description === "string" ? body.description.trim() : "",
+    category: body.category.trim(),
+    location: body.location.trim(),
+    image: body.image.trim(),
+    price: body.price,
+    rentalType: body.rentalType,
+    availableQuantity: body.availableQuantity,
+    condition: typeof body.condition === "string" ? body.condition.trim() : "Good",
+    brand: typeof body.brand === "string" ? body.brand.trim() : "",
+    model: typeof body.model === "string" ? body.model.trim() : "",
+    rentalTerms: [],
+    ownerId: request.user._id,
+    status: "approved",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const result = await getDatabase().collection("equipment").insertOne(item);
+  item._id = result.insertedId;
+  response.status(201).json({ item: toPublicDocument(item) });
+}));
 router.patch("/equipment/:id/status", verifyAdmin, asyncHandler(async (request, response) => {
   const id = parseObjectId(request.params.id, "equipment id");
   const { status } = request.body || {};
