@@ -11,28 +11,16 @@ async function connectToDatabase() {
       ? client.db(config.mongoDb)
       : client.db();
     const users = database.collection("users");
-    const admins = await users.find(
-      { role: "admin" },
-      { projection: { email: 1 } },
-    ).sort({ createdAt: 1, _id: 1 }).toArray();
-    const adminToKeep = config.adminEmail
-      ? admins.find((admin) => admin.email === config.adminEmail)
-      : admins[0];
-    const adminIdsToDemote = admins
-      .filter((admin) => !adminToKeep || !admin._id.equals(adminToKeep._id))
-      .map((admin) => admin._id);
-    if (adminIdsToDemote.length) {
-      await users.updateMany(
-        { _id: { $in: adminIdsToDemote } },
-        { $set: { role: "customer", updatedAt: new Date() } },
-      );
+    // Older versions enforced a single admin with a unique partial index. That
+    // prevented admins from promoting other users, so migrate it to a normal
+    // index instead of silently demoting role changes on every restart.
+    const indexes = await users.listIndexes().toArray();
+    if (indexes.some((index) => index.name === "role_1" && index.unique)) {
+      await users.dropIndex("role_1");
     }
     await Promise.all([
       users.createIndex({ email: 1 }, { unique: true }),
-      users.createIndex(
-        { role: 1 },
-        { unique: true, partialFilterExpression: { role: "admin" } },
-      ),
+      users.createIndex({ role: 1 }),
       database.collection("favorites").createIndex(
         { userId: 1, equipmentId: 1 },
         { unique: true },
@@ -46,6 +34,13 @@ async function connectToDatabase() {
         { checkoutSessionId: 1 },
         { unique: true, sparse: true },
       ),
+      database.collection("reviews").createIndex(
+        { bookingId: 1 },
+        { unique: true, sparse: true },
+      ),
+      database.collection("reviews").createIndex({ customerId: 1, createdAt: -1 }),
+      database.collection("notifications").createIndex({ recipientId: 1, createdAt: -1 }),
+      database.collection("notifications").createIndex({ senderId: 1, createdAt: -1 }),
     ]);
   }
   return database;

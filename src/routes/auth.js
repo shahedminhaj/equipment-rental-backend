@@ -176,10 +176,15 @@ router.post("/google", asyncHandler(async (request, response) => {
   if (typeof credential !== "string" || credential.length > 8192) {
     return response.status(400).json({ message: "A Google ID token is required" });
   }
-  const ticket = await googleClient.verifyIdToken({
-    idToken: credential,
-    audience: config.googleClientId,
-  });
+  let ticket;
+  try {
+    ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: config.googleClientId,
+    });
+  } catch {
+    return response.status(401).json({ message: "Invalid or expired Google token" });
+  }
   const profile = ticket.getPayload();
   if (!profile?.sub || !profile.email || profile.email_verified !== true) {
     return response.status(401).json({ message: "Google account must have a verified email" });

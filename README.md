@@ -26,10 +26,13 @@ For the Admin, configure both `ADMIN_EMAIL` and `ADMIN_PASSWORD` (at least six
 characters). On startup the server creates or promotes that exact account and
 syncs its password, so the credentials can be used on the normal
 `/api/auth/login` route immediately. Public registration and Google sign-in
-always create customer accounts. A unique partial MongoDB index enforces one
-Admin; the startup migration demotes any extra Admin roles. Keep the
+always create customer accounts. Admins can promote other users to Owner or
+Admin from the admin dashboard; roles persist across restarts. Keep the
 credentials private. The legacy `/api/auth/admin/setup` endpoints remain for
 compatibility but are no longer needed.
+
+`CLIENT_URL` may contain comma-separated origins for CORS. Stripe redirects use
+the first origin, so put the live frontend URL first.
 
 When the `equipment` collection is empty, startup seeds twelve approved demo
 listings from a verified demo owner so the public catalog, featured section,
@@ -50,6 +53,14 @@ renter does not return to the site. For local webhook testing, run
 `stripe listen --forward-to localhost:5000/api/payments/webhook`, then set
 `STRIPE_WEBHOOK_SECRET` to the signing secret printed by the CLI. Configure
 `STRIPE_CURRENCY` for a currency supported by the Stripe account.
+
+## Deployment
+
+Deploy this API to a public host (Render, Railway, or similar) and set
+`CLIENT_URL` to the deployed frontend origin (comma-separated extras are allowed
+for CORS; the first origin is used for Stripe return URLs). Confirm
+`GET /api/health` returns `{ "status": "ok", "database": "connected" }` in
+production. The frontend live URL is recorded in the client README.
 
 ## Scripts
 
@@ -93,8 +104,14 @@ All JSON responses use `{ "message": "..." }` for errors. Protected routes use
 | POST | `/api/payments/webhook` | Stripe | Verify payment events and record transactions |
 | GET | `/api/payments/mine` | Customer | Customer's payment transactions |
 | GET | `/api/payments/admin` | Admin | All payment transactions |
+| GET | `/api/reviews/featured` | Public | Real customer reviews for the home page |
+| GET | `/api/reviews/mine` | Customer | Reviews submitted by the signed-in customer |
+| POST | `/api/reviews` | Customer | Review a paid, completed rental |
+| GET | `/api/notifications/mine` | Signed in | Read the account inbox |
+| PATCH | `/api/notifications/read-all` | Signed in | Mark received messages as read |
+| POST | `/api/notifications` | Customer/Owner/Admin | Send a message to Admin, or from Admin to a selected customer/owner |
 | GET | `/api/admin/users` | Admin | Paginated user management |
-| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer or owner role; Admin is provisioned from environment |
+| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer, owner, or admin role |
 | PATCH | `/api/admin/users/:id/status` | Admin | Enable or disable a user |
 | GET | `/api/admin/equipment` | Admin | Review all listings |
 | PATCH | `/api/admin/equipment/:id/status` | Admin | Approve or reject a listing |

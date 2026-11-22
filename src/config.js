@@ -16,6 +16,11 @@ if (process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.length < 6) {
   throw new Error("ADMIN_PASSWORD must be at least 6 characters long");
 }
 
+const clientOrigins = (process.env.CLIENT_URL || "http://localhost:3000")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 module.exports = {
   port: Number(process.env.PORT || 5000),
   mongoUri: process.env.MONGODB_URI,
@@ -23,6 +28,9 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
   clientUrl: process.env.CLIENT_URL || "http://localhost:3000",
+  // CORS accepts multiple origins, but Stripe redirects must use a single URL.
+  clientOrigins,
+  clientOrigin: clientOrigins[0] || "http://localhost:3000",
   googleClientId: process.env.GOOGLE_CLIENT_ID,
   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,

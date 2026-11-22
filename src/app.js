@@ -13,9 +13,11 @@ const adminRoutes = require("./routes/admin");
 const analyticsRoutes = require("./routes/analytics");
 const { router: bookingRoutes, handleStripeWebhook } = require("./routes/bookings");
 const paymentRoutes = require("./routes/payments");
+const reviewRoutes = require("./routes/reviews");
+const notificationRoutes = require("./routes/notifications");
 
 const app = express();
-const allowedOrigins = config.clientUrl.split(",").map((origin) => origin.trim()).filter(Boolean);
+const allowedOrigins = config.clientOrigins;
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
@@ -86,6 +88,8 @@ app.use("/api/favorites", favoriteRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/reviews", reviewRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/analytics", analyticsRoutes);
 
@@ -97,7 +101,8 @@ app.use((error, _request, response, _next) => {
   if (error.code === 11000) {
     return response.status(409).json({ message: "A record with these details already exists" });
   }
-  const status = error.status || (error instanceof SyntaxError ? 400 : 500);
+  // Stripe errors expose statusCode, Express errors expose status.
+  const status = error.status || error.statusCode || (error instanceof SyntaxError ? 400 : 500);
   if (status >= 500) console.error(error);
   return response.status(status).json({
     message: status >= 500 ? "Internal server error" : error.message,

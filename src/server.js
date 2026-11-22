@@ -19,7 +19,7 @@ async function start() {
   });
 
   async function shutdown() {
-    clearInterval(statusJob);
+    statusJob.stop();
     server.close(async () => {
       await closeDatabase();
       process.exit(0);

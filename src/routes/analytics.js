@@ -1,6 +1,7 @@
 const { Router } = require("express");
 const { getDatabase } = require("../db");
 const { asyncHandler, verifyAdmin, verifyOwner } = require("../middleware");
+const config = require("../config");
 
 const router = Router();
 
@@ -21,77 +22,74 @@ function toMonthlySeries(rows, valueKey) {
   return monthKeys().map((month) => ({ month, [valueKey]: values.get(month) || 0 }));
 }
 
+async function paidBookingRevenuePipeline({ ownerId, since, includeMonthly = false } = {}) {
+  const match = { status: "paid" };
+  if (since) match.createdAt = { $gte: since };
+  return [
+    { $match: match },
+    { $lookup: { from: "bookings", localField: "bookingId", foreignField: "_id", as: "booking" } },
+    { $unwind: "$booking" },
+    ...(ownerId ? [{ $match: { "booking.ownerId": ownerId } }] : []),
+    { $group: {
+      _id: null,
+      total: { $sum: "$booking.totalAmount" },
+      ...(includeMonthly ? {
+        monthly: { $push: { month: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: "UTC" } }, amount: "$booking.totalAmount" } },
+      } : {}),
+    } },
+  ];
+}
+
 router.get("/admin", verifyAdmin, asyncHandler(async (_request, response) => {
   const db = getDatabase();
-  const [totalUsers, totalEquipment, totalBookings, pendingApprovals, completedRentals, revenue, monthlyRows] =
+  const since = monthStart(new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 11, 1)));
+  const [totalUsers, totalEquipment, totalBookings, pendingApprovals, completedRentals, paidRevenue, monthlyRevenue, bookingRows] =
     await Promise.all([
       db.collection("users").countDocuments({ disabled: { $ne: true } }),
       db.collection("equipment").countDocuments(),
-      db.collection("bookings").countDocuments(),
+      db.collection("bookings").countDocuments({ bookingStatus: { $nin: ["cancelled", "rejected"] } }),
       db.collection("equipment").countDocuments({ status: "pending" }),
       db.collection("bookings").countDocuments({ bookingStatus: "completed" }),
+      db.collection("payments").aggregate(paidBookingRevenuePipeline()).toArray(),
+      db.collection("payments").aggregate(paidBookingRevenuePipeline({ since, includeMonthly: true })).toArray(),
       db.collection("bookings").aggregate([
-        { $match: { paymentStatus: "paid" } },
-        { $group: { _id: null, total: { $sum: "$totalAmount" } } },
-      ]).toArray(),
-      db.collection("bookings").aggregate([
-        { $match: { paymentStatus: "paid", createdAt: { $gte: monthStart(new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 11, 1))) } } },
-        { $group: {
-          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: "UTC" } },
-          bookings: { $sum: 1 },
-          revenue: { $sum: "$totalAmount" },
-        } },
-        { $project: { _id: 0, month: "$_id", bookings: 1, revenue: 1 } },
+        { $match: { bookingStatus: { $nin: ["cancelled", "rejected"] }, createdAt: { $gte: since } } },
+        { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: "UTC" } }, bookings: { $sum: 1 } } },
+        { $project: { _id: 0, month: "$_id", bookings: 1 } },
       ]).toArray(),
     ]);
-
+  const paidRevenueRows = monthlyRevenue[0]?.monthly || [];
+  const revenueByMonth = new Map();
+  for (const row of paidRevenueRows) revenueByMonth.set(row.month, (revenueByMonth.get(row.month) || 0) + row.amount);
+  const monthlyRevenueRows = [...revenueByMonth].map(([month, revenue]) => ({ month, revenue }));
   response.json({
-    totalUsers,
-    totalEquipment,
-    totalBookings,
-    pendingApprovals,
-    completedRentals,
-    totalRevenue: revenue[0]?.total || 0,
-    currency: (await db.collection("bookings").findOne({}, { projection: { currency: 1 } }))?.currency || "bdt",
-    monthlyBookings: toMonthlySeries(monthlyRows, "bookings"),
-    monthlyRevenue: toMonthlySeries(monthlyRows, "revenue"),
+    totalUsers, totalEquipment, totalBookings, pendingApprovals, completedRentals,
+    totalRevenue: paidRevenue[0]?.total || 0,
+    currency: config.stripeCurrency,
+    monthlyBookings: toMonthlySeries(bookingRows, "bookings"),
+    monthlyRevenue: toMonthlySeries(monthlyRevenueRows, "revenue"),
   });
 }));
 
 router.get("/owner", verifyOwner, asyncHandler(async (request, response) => {
   const db = getDatabase();
   const ownerId = request.user._id;
-  const [totalListedEquipment, completedRentals, earnings, monthlyRows] = await Promise.all([
+  const since = monthStart(new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 11, 1)));
+  const [totalListedEquipment, completedRentals, earnings, monthlyEarnings] = await Promise.all([
     db.collection("equipment").countDocuments({ ownerId }),
     db.collection("bookings").countDocuments({ ownerId, bookingStatus: "completed" }),
-    db.collection("bookings").aggregate([
-      { $match: { ownerId, paymentStatus: "paid" } },
-      { $group: { _id: null, total: { $sum: "$totalAmount" } } },
-    ]).toArray(),
-    db.collection("bookings").aggregate([
-      {
-        $match: {
-          ownerId,
-          paymentStatus: "paid",
-          createdAt: {
-            $gte: monthStart(new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 11, 1))),
-          },
-        },
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: "UTC" } },
-          earnings: { $sum: "$totalAmount" },
-        },
-      },
-      { $project: { _id: 0, month: "$_id", earnings: 1 } },
-    ]).toArray(),
+    db.collection("payments").aggregate(paidBookingRevenuePipeline({ ownerId })).toArray(),
+    db.collection("payments").aggregate(paidBookingRevenuePipeline({ ownerId, since, includeMonthly: true })).toArray(),
   ]);
+  const monthlyRows = new Map();
+  for (const row of monthlyEarnings[0]?.monthly || []) {
+    monthlyRows.set(row.month, (monthlyRows.get(row.month) || 0) + row.amount);
+  }
   response.json({
     totalListedEquipment,
     completedRentals,
     totalEarnings: earnings[0]?.total || 0,
-    monthlyEarnings: toMonthlySeries(monthlyRows, "earnings"),
+    monthlyEarnings: toMonthlySeries([...monthlyRows].map(([month, earnings]) => ({ month, earnings })), "earnings"),
   });
 }));
 

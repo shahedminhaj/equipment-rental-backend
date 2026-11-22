@@ -44,3 +44,36 @@ test("first-admin setup is unavailable when server credentials are not configure
   assert.equal(setupResponse.status, 503);
   assert.deepEqual(await setupResponse.json(), { message: "Admin setup is not configured" });
 });
+
+test("featured review endpoint reports unavailable database instead of serving fake testimonials", async (t) => {
+  const server = app.listen(0);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await new Promise((resolve) => server.once("listening", resolve));
+
+  const response = await fetch(`http://localhost:${server.address().port}/api/reviews/featured`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { message: "Review service is unavailable" });
+});
+
+
+test("notification inbox, read receipts, and sending require authentication", async (t) => {
+  const server = app.listen(0);
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  await new Promise((resolve) => server.once("listening", resolve));
+  const endpoint = `http://localhost:${server.address().port}/api/notifications`;
+
+  const inbox = await fetch(`${endpoint}/mine`);
+  assert.equal(inbox.status, 401);
+  const readAll = await fetch(`${endpoint}/read-all`, { method: "PATCH" });
+  assert.equal(readAll.status, 401);
+  const send = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subject: "Help", message: "Please contact me" }),
+  });
+  assert.equal(send.status, 401);
+});

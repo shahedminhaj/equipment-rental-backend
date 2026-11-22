@@ -4,6 +4,8 @@ const { asyncHandler, parseObjectId, verifyAdmin } = require("../middleware");
 const { pagination, ROLES, toPublicDocument } = require("../domain");
 const config = require("../config");
 
+const { notifySafely } = require("../notifications");
+
 const router = Router();
 
 router.get("/users", verifyAdmin, asyncHandler(async (request, response) => {
@@ -41,19 +43,13 @@ router.patch("/users/:id/role", verifyAdmin, asyncHandler(async (request, respon
   if (config.adminEmail && existingUser.email === config.adminEmail) {
     return response.status(400).json({ message: "The configured administrator role cannot be changed" });
   }
-  if (role === "admin") {
-    const currentAdmin = await users.findOne({ role: "admin", _id: { $ne: id } }, { projection: { _id: 1 } });
-    if (currentAdmin) {
-      return response.status(409).json({ message: "Another admin already exists. Demote the current admin first." });
-    }
-  }
-
   const user = await users.findOneAndUpdate(
     { _id: id },
     { $set: { role, updatedAt: new Date() } },
     { returnDocument: "after", projection: { passwordHash: 0 } },
   );
   if (!user) return response.status(404).json({ message: "User not found" });
+  await notifySafely({ sender: request.user, recipients: [user], type: "account_role", subject: "Your account role changed", message: `An administrator changed your Fieldkit role to ${role}.` });
   response.json({ user: toPublicDocument(user) });
 }));
 
@@ -71,6 +67,7 @@ router.patch("/users/:id/status", verifyAdmin, asyncHandler(async (request, resp
     { returnDocument: "after", projection: { passwordHash: 0 } },
   );
   if (!user) return response.status(404).json({ message: "User not found" });
+  await notifySafely({ sender: request.user, recipients: [user], type: "account_status", subject: `Account ${request.body.disabled ? "disabled" : "enabled"}`, message: `An administrator ${request.body.disabled ? "disabled" : "re-enabled"} your Fieldkit account.` });
   response.json({ user: toPublicDocument(user) });
 }));
 
@@ -103,6 +100,8 @@ router.patch("/equipment/:id/status", verifyAdmin, asyncHandler(async (request, 
     { returnDocument: "after" },
   );
   if (!item) return response.status(404).json({ message: "Equipment not found" });
+  const owner = await getDatabase().collection("users").findOne({ _id: item.ownerId });
+  if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "equipment_status", subject: `Equipment listing ${status}`, message: `Your listing “${item.name}” was ${status} by the admin team.` });
   response.json({ item: toPublicDocument(item) });
 }));
 

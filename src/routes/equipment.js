@@ -16,6 +16,8 @@ const {
   toPublicDocument,
 } = require("../domain");
 
+const { notifyAdminsSafely } = require("../notifications");
+
 const router = Router();
 const requiredTextFields = ["name", "category", "location", "image"];
 
@@ -144,6 +146,7 @@ router.post("/", verifyOwner, asyncHandler(async (request, response) => {
   };
   const result = await getDatabase().collection("equipment").insertOne(equipment);
   equipment._id = result.insertedId;
+  await notifyAdminsSafely({ sender: request.user, subject: "Equipment listing submitted", message: `${equipment.name} was submitted by ${request.user.name} and is waiting for admin review.`, type: "equipment_request" });
   response.status(201).json({ item: toPublicDocument(equipment) });
 }));
 

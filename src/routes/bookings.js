@@ -13,6 +13,8 @@ const {
 } = require("../middleware");
 const { BOOKING_STATUSES, rentalUnits, toPublicDocument } = require("../domain");
 
+const { notifySafely } = require("../notifications");
+
 const router = Router();
 let stripeClient;
 
@@ -201,14 +203,16 @@ router.post("/", verifyRenter, asyncHandler(async (request, response) => {
         },
       }],
       metadata: { bookingId: booking._id.toString() },
-      success_url: `${config.clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${config.clientUrl}/payment/cancel?booking_id=${booking._id}`,
+      success_url: `${config.clientOrigin}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${config.clientOrigin}/payment/cancel?booking_id=${booking._id}`,
       expires_at: Math.floor(booking.checkoutExpiresAt.getTime() / 1000),
     });
     await db.collection("bookings").updateOne(
       { _id: booking._id },
       { $set: { checkoutSessionId: session.id, updatedAt: new Date() } },
     );
+    const owner = await db.collection("users").findOne({ _id: booking.ownerId });
+    if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_request", subject: "New rental request", message: `${request.user.name} requested ${booking.equipmentName} for ${booking.rentalStartDate} to ${booking.rentalEndDate}. The booking is waiting for your confirmation.` });
     return response.status(201).json({
       booking: toPublicDocument({ ...booking, checkoutSessionId: session.id }),
       checkoutUrl: session.url,
@@ -231,8 +235,29 @@ router.post("/:id/cancel-checkout", verifyRenter, asyncHandler(async (request, r
   const bookings = getDatabase().collection("bookings");
   const booking = await bookings.findOne({ _id: id, customerId: request.user._id });
   if (!booking) return response.status(404).json({ message: "Booking not found" });
+  if (booking.bookingStatus !== "pending") {
+    return response.status(409).json({ message: "Only bookings awaiting confirmation can be cancelled" });
+  }
   if (booking.paymentStatus === "paid") {
-    return response.status(409).json({ message: "A paid booking cannot be cancelled from checkout" });
+    const db = getDatabase();
+    const payment = await db.collection("payments").findOne({ bookingId: id });
+    if (!payment?.paymentIntentId) return response.status(409).json({ message: "A refundable payment could not be found for this booking" });
+    if (payment.status !== "refunded") {
+      const refund = await getStripe().refunds.create(
+        { payment_intent: payment.paymentIntentId },
+        { idempotencyKey: `booking-refund-${id.toString()}` },
+      );
+      await db.collection("payments").updateOne({ _id: payment._id, status: "paid" }, { $set: { status: "refunded", refundId: refund.id, refundedAt: new Date() } });
+    }
+    const updated = await db.collection("bookings").findOneAndUpdate(
+      { _id: id, customerId: request.user._id, bookingStatus: "pending", paymentStatus: "paid" },
+      { $set: { bookingStatus: "cancelled", paymentStatus: "refunded", refundedAt: new Date(), updatedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+    if (!updated) return response.status(409).json({ message: "The booking changed while its refund was processing" });
+    const owner = await db.collection("users").findOne({ _id: updated.ownerId });
+    if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_status", subject: "Booking cancelled", message: `The renter cancelled the pending booking for ${updated.equipmentName}. Their payment is being refunded.` });
+    return response.json({ booking: toPublicDocument(updated) });
   }
   if (booking.paymentStatus === "failed" && booking.bookingStatus === "cancelled") {
     return response.json({ booking: toPublicDocument(booking) });
@@ -267,6 +292,8 @@ router.post("/:id/cancel-checkout", verifyRenter, asyncHandler(async (request, r
   if (!updated || updated.paymentStatus !== "failed" || updated.bookingStatus !== "cancelled") {
     return response.status(409).json({ message: "Checkout status changed; refresh and try again" });
   }
+  const owner = await getDatabase().collection("users").findOne({ _id: updated.ownerId });
+  if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_status", subject: "Booking cancelled", message: `The renter cancelled the pending booking for ${updated.equipmentName}.` });
   return response.json({ booking: toPublicDocument(updated) });
 }));
 
@@ -382,17 +409,62 @@ router.patch("/:id/status", [...authenticate, asyncHandler(async (request, respo
   if (booking.bookingStatus === "completed" || booking.bookingStatus === "cancelled") {
     return response.status(409).json({ message: "This booking can no longer be changed" });
   }
+  if (booking.bookingStatus === bookingStatus && booking.paymentStatus === "refunded") {
+    return response.json({ booking: toPublicDocument(booking) });
+  }
   if (bookingStatus === "completed" &&
       booking.rentalEndDate > new Date().toISOString().slice(0, 10)) {
     return response.status(409).json({ message: "A rental cannot be completed before its end date" });
   }
+  if (["rejected", "cancelled"].includes(bookingStatus)) {
+    const payment = await db.collection("payments").findOne({ bookingId: id });
+    if (!payment || (payment.status !== "refunded" && !payment.paymentIntentId)) {
+      return response.status(409).json({ message: "A refundable Stripe payment could not be found for this booking" });
+    }
+    if (payment.status !== "refunded") {
+      const refund = await getStripe().refunds.create(
+        { payment_intent: payment.paymentIntentId },
+        { idempotencyKey: `booking-refund-${id.toString()}` },
+      );
+      await db.collection("payments").updateOne(
+        { _id: payment._id, status: "paid" },
+        { $set: { status: "refunded", refundId: refund.id, refundedAt: new Date() } },
+      );
+    }
+    const updated = await db.collection("bookings").findOneAndUpdate(
+      { _id: id, paymentStatus: "paid" },
+      { $set: { bookingStatus, paymentStatus: "refunded", refundedAt: new Date(), updatedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+    if (!updated) {
+      return response.status(409).json({ message: "The booking changed while its refund was processing; refresh and review its status" });
+    }
+    await notifyRenter(updated, request.user, bookingStatus);
+    return response.json({ booking: toPublicDocument(updated) });
+  }
   const updated = await db.collection("bookings").findOneAndUpdate(
-    { _id: id },
+    { _id: id, bookingStatus: booking.bookingStatus, paymentStatus: "paid" },
     { $set: { bookingStatus, updatedAt: new Date() } },
     { returnDocument: "after" },
   );
+  if (!updated) return response.status(409).json({ message: "The booking changed; refresh and try again" });
+  await notifyRenter(updated, request.user, bookingStatus);
   response.json({ booking: toPublicDocument(updated) });
 })]);
+
+async function notifyRenter(booking, sender, status) {
+  const renter = await getDatabase().collection("users").findOne({ _id: booking.customerId });
+  if (!renter) return;
+  const actor = sender.role === "admin" ? "The admin team" : "The equipment owner";
+  const message = status === "confirmed"
+    ? `${actor} confirmed your booking for ${booking.equipmentName}.`
+    : status === "rejected" || status === "cancelled"
+      ? `${actor} ${status === "rejected" ? "declined" : "cancelled"} your booking for ${booking.equipmentName}${booking.paymentStatus === "refunded" ? ". Your refund is being processed." : "."}`
+      : status === "completed"
+        ? `Your rental for ${booking.equipmentName} is complete.`
+        : `Your booking for ${booking.equipmentName} is now ${status}.`;
+  await notifySafely({ sender, recipients: [renter], type: "booking_status", subject: `Booking ${status}`, message });
+}
 
 router.get("/:id", verifyRenter, asyncHandler(async (request, response) => {
   const id = parseObjectId(request.params.id, "booking id");
@@ -419,53 +491,61 @@ async function handleStripeWebhook(request, response) {
   } catch (error) {
     return response.status(400).json({ message: `Invalid Stripe webhook: ${error.message}` });
   }
-  if (
-    event.type === "checkout.session.completed" ||
-    event.type === "checkout.session.async_payment_succeeded"
-  ) {
-    const session = event.data.object;
+  const paidEvents = ["checkout.session.completed", "checkout.session.async_payment_succeeded"];
+  const failedEvents = ["checkout.session.expired", "checkout.session.async_payment_failed"];
+  if (!paidEvents.includes(event.type) && !failedEvents.includes(event.type)) {
+    // Stripe sends many unrelated events; acknowledge them instead of erroring.
+    return response.json({ received: true });
+  }
+
+  const session = event.data.object;
+  let bookingId;
+  try {
+    bookingId = parseObjectId(session.metadata?.bookingId, "booking id");
+  } catch {
+    // A signed event from another Checkout session is not an error on our side.
+    return response.json({ received: true, ignored: true });
+  }
+
+  const db = getDatabase();
+  const booking = await db.collection("bookings").findOne({ _id: bookingId });
+  if (!booking) return response.json({ received: true, ignored: true });
+
+  if (paidEvents.includes(event.type)) {
     if (session.payment_status !== "paid") return response.json({ received: true });
-    const bookingId = parseObjectId(session.metadata?.bookingId, "booking id");
-    const db = getDatabase();
-    const booking = await db.collection("bookings").findOne({ _id: bookingId });
-    if (booking && (
+    if (
       session.amount_total !== booking.totalAmount * 100 ||
       session.currency !== booking.currency ||
       (booking.checkoutSessionId && booking.checkoutSessionId !== session.id)
-    )) {
-      return response.status(400).json({ message: "Payment amount does not match the booking" });
+    ) {
+      // Replying 400 makes Stripe retry forever; log and acknowledge instead.
+      console.error(`Stripe payment mismatch for booking ${bookingId}`);
+      return response.json({ received: true, ignored: true });
     }
-    if (booking) {
-      await db.collection("bookings").updateOne(
-        { _id: bookingId, paymentStatus: "pending" },
-        { $set: {
-          paymentStatus: "paid",
-          paidAt: new Date(),
-          checkoutSessionId: session.id,
-          updatedAt: new Date(),
-        } },
-      );
-      await db.collection("payments").updateOne(
-        { checkoutSessionId: session.id },
-        { $setOnInsert: {
-          bookingId,
-          checkoutSessionId: session.id,
-          paymentIntentId: session.payment_intent,
-          amount: session.amount_total,
-          currency: session.currency,
-          status: "paid",
-          createdAt: new Date(),
-        } },
-        { upsert: true },
-      );
-    }
-  } else if (
-    event.type === "checkout.session.expired" ||
-    event.type === "checkout.session.async_payment_failed"
-  ) {
-    const session = event.data.object;
-    const bookingId = parseObjectId(session.metadata?.bookingId, "booking id");
-    await getDatabase().collection("bookings").updateOne(
+    await db.collection("bookings").updateOne(
+      { _id: bookingId, paymentStatus: "pending" },
+      { $set: {
+        paymentStatus: "paid",
+        paidAt: new Date(),
+        checkoutSessionId: session.id,
+        updatedAt: new Date(),
+      } },
+    );
+    await db.collection("payments").updateOne(
+      { checkoutSessionId: session.id },
+      { $setOnInsert: {
+        bookingId,
+        checkoutSessionId: session.id,
+        paymentIntentId: session.payment_intent,
+        amount: session.amount_total,
+        currency: session.currency,
+        status: "paid",
+        createdAt: new Date(),
+      } },
+      { upsert: true },
+    );
+  } else {
+    await db.collection("bookings").updateOne(
       { _id: bookingId, paymentStatus: "pending" },
       { $set: {
         paymentStatus: "failed",
