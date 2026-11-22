@@ -153,7 +153,7 @@ router.post("/admin/setup", asyncHandler(async (request, response) => {
   return response.status(201).json({ token: issueToken(user), user: toPublicDocument(user) });
 }));
 
-router.post("/login", asyncHandler(async (request, response) => {
+async function passwordLogin(request, response, accountType = "any") {
   const email = typeof request.body?.email === "string"
     ? request.body.email.trim().toLowerCase()
     : "";
@@ -165,8 +165,18 @@ router.post("/login", asyncHandler(async (request, response) => {
   if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
     return response.status(401).json({ message: "Email or password is incorrect" });
   }
+  if (accountType === "user" && user.role === "admin") {
+    return response.status(403).json({ message: "This account uses Admin sign in. Select Admin to continue." });
+  }
+  if (accountType === "admin" && user.role !== "admin") {
+    return response.status(403).json({ message: "This account does not have administrator access." });
+  }
   return response.json({ token: issueToken(user), user: toPublicDocument(user) });
-}));
+}
+
+router.post("/login", asyncHandler((request, response) => passwordLogin(request, response, "user")));
+router.post("/user/login", asyncHandler((request, response) => passwordLogin(request, response, "user")));
+router.post("/admin/login", asyncHandler((request, response) => passwordLogin(request, response, "admin")));
 
 router.post("/google", asyncHandler(async (request, response) => {
   if (!googleClient) {

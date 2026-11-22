@@ -233,31 +233,60 @@ router.post("/", verifyRenter, asyncHandler(async (request, response) => {
 router.post("/:id/cancel-checkout", verifyRenter, asyncHandler(async (request, response) => {
   const id = parseObjectId(request.params.id, "booking id");
   const bookings = getDatabase().collection("bookings");
-  const booking = await bookings.findOne({ _id: id, customerId: request.user._id });
+  let booking = await bookings.findOne({ _id: id, customerId: request.user._id });
   if (!booking) return response.status(404).json({ message: "Booking not found" });
   if (booking.bookingStatus !== "pending") {
-    return response.status(409).json({ message: "Only bookings awaiting confirmation can be cancelled" });
+    return response.status(409).json({ message: "Only pending bookings can be cancelled. Confirmed bookings cannot be cancelled or refunded." });
   }
   if (booking.paymentStatus === "paid") {
+    if (!booking.cancellationPending) {
+      booking = await bookings.findOneAndUpdate(
+        { _id: id, customerId: request.user._id, bookingStatus: "pending", paymentStatus: "paid", cancellationPending: { $ne: true } },
+        { $set: { cancellationPending: true, cancellationRequestedAt: new Date(), updatedAt: new Date() } },
+        { returnDocument: "after" },
+      );
+      if (!booking) {
+        return response.status(409).json({ message: "This booking has already been confirmed or its cancellation is being processed." });
+      }
+    }
+
     const db = getDatabase();
     const payment = await db.collection("payments").findOne({ bookingId: id });
-    if (!payment?.paymentIntentId) return response.status(409).json({ message: "A refundable payment could not be found for this booking" });
-    if (payment.status !== "refunded") {
-      const refund = await getStripe().refunds.create(
-        { payment_intent: payment.paymentIntentId },
-        { idempotencyKey: `booking-refund-${id.toString()}` },
-      );
-      await db.collection("payments").updateOne({ _id: payment._id, status: "paid" }, { $set: { status: "refunded", refundId: refund.id, refundedAt: new Date() } });
+    if (!payment?.paymentIntentId) {
+      await bookings.updateOne({ _id: id, bookingStatus: "pending", cancellationPending: true }, { $unset: { cancellationPending: "", cancellationRequestedAt: "" } });
+      return response.status(409).json({ message: "A refundable payment could not be found for this booking" });
     }
-    const updated = await db.collection("bookings").findOneAndUpdate(
-      { _id: id, customerId: request.user._id, bookingStatus: "pending", paymentStatus: "paid" },
-      { $set: { bookingStatus: "cancelled", paymentStatus: "refunded", refundedAt: new Date(), updatedAt: new Date() } },
-      { returnDocument: "after" },
-    );
-    if (!updated) return response.status(409).json({ message: "The booking changed while its refund was processing" });
-    const owner = await db.collection("users").findOne({ _id: updated.ownerId });
-    if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_status", subject: "Booking cancelled", message: `The renter cancelled the pending booking for ${updated.equipmentName}. Their payment is being refunded.` });
-    return response.json({ booking: toPublicDocument(updated) });
+
+    let refundMayHaveBeenIssued = payment.status === "refunded";
+    try {
+      if (payment.status !== "refunded") {
+        refundMayHaveBeenIssued = true;
+        const refund = await getStripe().refunds.create(
+          { payment_intent: payment.paymentIntentId },
+          { idempotencyKey: `booking-refund-${id.toString()}` },
+        );
+        await db.collection("payments").updateOne(
+          { _id: payment._id, status: "paid" },
+          { $set: { status: "refunded", refundId: refund.id, refundedAt: new Date() } },
+        );
+      }
+      const updated = await bookings.findOneAndUpdate(
+        { _id: id, customerId: request.user._id, bookingStatus: "pending", paymentStatus: "paid", cancellationPending: true },
+        { $set: { bookingStatus: "cancelled", paymentStatus: "refunded", refundedAt: new Date(), updatedAt: new Date() }, $unset: { cancellationPending: "", cancellationRequestedAt: "" } },
+        { returnDocument: "after" },
+      );
+      if (!updated) return response.status(409).json({ message: "The booking changed while its refund was processing" });
+      const owner = await db.collection("users").findOne({ _id: updated.ownerId });
+      if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_status", subject: "Booking cancelled", message: `The renter cancelled the pending booking for ${updated.equipmentName}. Their payment is being refunded.` });
+      return response.json({ booking: toPublicDocument(updated) });
+    } catch (error) {
+      // Keep the lock if Stripe may already have issued a refund; retrying is safe
+      // because the refund uses a stable idempotency key, and confirmation must wait.
+      if (!refundMayHaveBeenIssued) {
+        await bookings.updateOne({ _id: id, bookingStatus: "pending", paymentStatus: "paid", cancellationPending: true }, { $unset: { cancellationPending: "", cancellationRequestedAt: "" } });
+      }
+      throw error;
+    }
   }
   if (booking.paymentStatus === "failed" && booking.bookingStatus === "cancelled") {
     return response.json({ booking: toPublicDocument(booking) });
@@ -278,7 +307,7 @@ router.post("/:id/cancel-checkout", verifyRenter, asyncHandler(async (request, r
   }
 
   await bookings.updateOne(
-    { _id: id, customerId: request.user._id, paymentStatus: "pending" },
+    { _id: id, customerId: request.user._id, bookingStatus: "pending", paymentStatus: "pending" },
     { $set: {
       paymentStatus: "failed",
       bookingStatus: "cancelled",
@@ -296,7 +325,6 @@ router.post("/:id/cancel-checkout", verifyRenter, asyncHandler(async (request, r
   if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_status", subject: "Booking cancelled", message: `The renter cancelled the pending booking for ${updated.equipmentName}.` });
   return response.json({ booking: toPublicDocument(updated) });
 }));
-
 router.get("/mine", verifyRenter, asyncHandler(async (request, response) => {
   const bookings = await getDatabase().collection("bookings")
     .find({ customerId: request.user._id })
@@ -406,6 +434,7 @@ router.patch("/:id/status", [...authenticate, asyncHandler(async (request, respo
   if (booking.paymentStatus !== "paid") {
     return response.status(409).json({ message: "Only paid bookings can be managed" });
   }
+  if (booking.cancellationPending) return response.status(409).json({ message: "This booking cancellation is being processed; confirmation must wait" });
   if (booking.bookingStatus === "completed" || booking.bookingStatus === "cancelled") {
     return response.status(409).json({ message: "This booking can no longer be changed" });
   }
@@ -443,7 +472,7 @@ router.patch("/:id/status", [...authenticate, asyncHandler(async (request, respo
     return response.json({ booking: toPublicDocument(updated) });
   }
   const updated = await db.collection("bookings").findOneAndUpdate(
-    { _id: id, bookingStatus: booking.bookingStatus, paymentStatus: "paid" },
+    { _id: id, bookingStatus: booking.bookingStatus, paymentStatus: "paid", cancellationPending: { $ne: true } },
     { $set: { bookingStatus, updatedAt: new Date() } },
     { returnDocument: "after" },
   );
