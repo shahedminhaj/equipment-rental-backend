@@ -23,7 +23,6 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.12.0",
-    "next": "^16.4.6",
     "node-cron": "^3.0.3",
     "stripe": "^17.7.0"
   }
