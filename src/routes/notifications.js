@@ -32,7 +32,7 @@ router.get("/mine", authenticate, asyncHandler(async (request, response) => {
   const [items, unreadCount] = await Promise.all([
     notifications.find({ $or: [
       { recipientId: request.user._id },
-      { senderId: request.user._id },
+      { senderId: request.user._id, type: "message" },
     ] }).sort({ createdAt: -1, _id: -1 }).limit(Math.min(limit * 10, 500)).toArray(),
     notifications.countDocuments({ recipientId: request.user._id, readAt: null }),
   ]);
