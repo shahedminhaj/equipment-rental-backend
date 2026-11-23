@@ -1,160 +1,68 @@
 # Fieldkit Equipment Rental API
 
-REST API for the Fieldkit equipment-rental marketplace. It supports the
-frontend in `equipment-rental-frontend` and provides MongoDB-backed equipment,
-customer accounts, owner listings, bookings, Stripe Checkout payments, and
-administrative tools.
+Backend REST API for the **Fieldkit Equipment Rental Marketplace**. Built with Node.js, Express, and MongoDB.
 
-## Getting started
+### Features
+- User authentication (Email & Google)
+- Customer, Owner, and Admin roles
+- Equipment listing and management
+- Search, filter, and favorites
+- Equipment booking and availability checking
+- Stripe Checkout payment integration
+- Reviews and notifications
+- Admin dashboard and analytics
 
-Requirements: Node.js 20+ and MongoDB.
+### Tech Stack
+- Node.js & Express.js
+- MongoDB
+- JWT & bcryptjs
+- Stripe
+- Google OAuth
 
-```powershell
+### Getting Started
+
+**Requirements:** Node.js 20+ and MongoDB.
+
+```bash
 npm install
-Copy-Item .env.example .env
+```
+
+Create a `.env` file using `.env.example` and configure:
+
+```env
+PORT=5000
+MONGODB_URI=your_mongodb_uri
+MONGODB_DB=fieldkit
+JWT_SECRET=your_32_character_secret
+CLIENT_URL=http://localhost:3000
+```
+
+Start the development server:
+
+```bash
 npm run dev
 ```
 
-Set the values in `.env` before starting the server. `MONGODB_URI` and a
-32-character `JWT_SECRET` are required. Set `MONGODB_DB=fieldkit` to isolate
-Fieldkit data from other projects on the same cluster; without a database name
-in either setting, MongoDB's default database may be selected. The API listens
-on port 5000 by default. Set `CLIENT_URL` to the frontend origin; multiple
-origins can be comma-separated.
+The API will run at `http://localhost:5000`.
 
-For the Admin, configure both `ADMIN_EMAIL` and `ADMIN_PASSWORD` (at least six
-characters). On startup the server creates or promotes that exact account and
-syncs its password, so the credentials can be used on the normal
-`/api/auth/login` route immediately. Public registration and Google sign-in
-always create customer accounts. Admins can promote other users to Owner or
-Admin from the admin dashboard; roles persist across restarts. Keep the
-credentials private. The legacy `/api/auth/admin/setup` endpoints remain for
-compatibility but are no longer needed.
+### Available Scripts
 
-`CLIENT_URL` may contain comma-separated origins for CORS. Stripe redirects use
-the first origin, so put the live frontend URL first.
-
-When the `equipment` collection is empty, startup seeds twelve approved demo
-listings from a verified demo owner so the public catalog, featured section,
-admin analytics, and owner tools have meaningful data immediately. Seeding is
-idempotent: existing catalog data is never overwritten. A daily job also marks
-paid rentals as completed after their end date passes.
-
-Google sign-in requires `GOOGLE_CLIENT_ID`. Set the same OAuth client ID as
-`NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend. This uses Google Identity
-Services ID-token verification; authorize the frontend JavaScript origin
-(`http://localhost:3000`) in Google Cloud. No redirect URI is used.
-
-Stripe Checkout requires `STRIPE_SECRET_KEY`. Card payments are verified
-server-side when the signed-in renter returns to the success page, so a local
-webhook listener and `STRIPE_WEBHOOK_SECRET` are not required for basic testing.
-Webhooks are recommended for production so payments are recorded even if the
-renter does not return to the site. For local webhook testing, run
-`stripe listen --forward-to localhost:5000/api/payments/webhook`, then set
-`STRIPE_WEBHOOK_SECRET` to the signing secret printed by the CLI. Configure
-`STRIPE_CURRENCY` for a currency supported by the Stripe account.
-
-## Deployment
-
-Deploy this API to a public host (Render, Railway, or similar) and set
-`CLIENT_URL` to the deployed frontend origin (comma-separated extras are allowed
-for CORS; the first origin is used for Stripe return URLs). Confirm
-`GET /api/health` returns `{ "status": "ok", "database": "connected" }` in
-production. The frontend live URL is recorded in the client README.
-
-## Scripts
-
-- `npm run dev` — start with Node's watch mode
-- `npm start` — start the production server
-- `npm test` — run unit tests
-
-## API
-
-All JSON responses use `{ "message": "..." }` for errors. Protected routes use
-`Authorization: Bearer <JWT>`. Equipment and booking IDs are MongoDB ObjectIds.
-
-| Method | Endpoint | Access | Purpose |
-| --- | --- | --- | --- |
-| GET | `/` | Public | API service status and health-check path |
-| GET | `/api/health` | Public | Health check including MongoDB connectivity |
-| GET | `/api/config` | Public | Public currency and enabled sign-in/payment features |
-| POST | `/api/auth/register` | Public | Register a customer |
-| POST | `/api/auth/login` | Public | Email/password login |
-| POST | `/api/auth/google` | Public | Verify a Google ID token; new accounts are customers |
-| GET | `/api/auth/admin/setup-status` | Public | Check whether first-admin setup is available |
-| POST | `/api/auth/admin/setup` | Public, rate-limited | Create the one configured Admin account |
-| GET | `/api/auth/me` | Signed in | Current user |
-| GET | `/api/equipment` | Public | Search, filter, sort, paginate approved listings |
-| GET | `/api/equipment/featured` | Public | Six latest approved listings |
-| GET | `/api/equipment/categories` | Public | Approved categories with listing counts |
-| GET | `/api/equipment/:id` | Public | Approved listing details and owner |
-| POST | `/api/equipment` | Owner | Create a pending listing |
-| GET | `/api/equipment/owner/mine` | Owner | Owner's listings |
-| PATCH/DELETE | `/api/equipment/:id` | Owner/Admin | Update or delete a listing |
-| GET/POST/DELETE | `/api/favorites[/:equipmentId]` | Customer | List, add, or remove favorites |
-| GET/PATCH | `/api/profile` | Signed in | View or update profile |
-| POST | `/api/bookings/quote` | Public | Authoritative rental total for the selected dates and quantity |
-| POST | `/api/bookings` | Customer | Create booking and Stripe Checkout session |
-| GET | `/api/bookings/mine` | Customer | Customer's bookings |
-| GET | `/api/bookings/checkout/:sessionId` | Customer | Payment status for the signed-in renter's checkout |
-| POST | `/api/bookings/:id/cancel-checkout` | Customer | Expire checkout and release its reservation |
-| GET | `/api/bookings/owner` | Owner | Rentals for owner's listings |
-| GET | `/api/bookings/admin` | Admin | All bookings |
-| PATCH | `/api/bookings/:id/status` | Owner/Admin | Manage a paid booking |
-| POST | `/api/payments/webhook` | Stripe | Verify payment events and record transactions |
-| GET | `/api/payments/mine` | Customer | Customer's payment transactions |
-| GET | `/api/payments/admin` | Admin | All payment transactions |
-| GET | `/api/reviews/featured` | Public | Real customer reviews for the home page |
-| GET | `/api/reviews/mine` | Customer | Reviews submitted by the signed-in customer |
-| POST | `/api/reviews` | Customer | Review a paid, completed rental |
-| GET | `/api/notifications/mine` | Signed in | Read the account inbox |
-| PATCH | `/api/notifications/read-all` | Signed in | Mark received messages as read |
-| POST | `/api/notifications` | Customer/Owner/Admin | Send a message to Admin, or from Admin to a selected customer/owner |
-| GET | `/api/admin/users` | Admin | Paginated user management |
-| PATCH | `/api/admin/users/:id/role` | Admin | Assign customer, owner, or admin role |
-| PATCH | `/api/admin/users/:id/status` | Admin | Enable or disable a user |
-| GET | `/api/admin/equipment` | Admin | Review all listings |
-| PATCH | `/api/admin/equipment/:id/status` | Admin | Approve or reject a listing |
-| GET | `/api/analytics/admin` | Admin | Platform metrics and monthly bookings/revenue |
-| GET | `/api/analytics/owner` | Owner | Listing, rental, and monthly earning metrics |
-
-### Equipment search parameters
-
-`GET /api/equipment` accepts `search` (or `q`), `category`, `rentalType`
-(`Daily`, `Weekly`, or `Monthly`), `minPrice`, `maxPrice`, `available`
-(`true`/`false`), `sort` (`recent`, `price-low`, `price-high`), `page`, and
-`limit`. Search matches listing name, category, and location. The response
-includes `items`, `total`, `page`, `limit`, and `pages`.
-
-### Booking request
-
-```json
-{
-  "equipmentId": "MongoDB ObjectId",
-  "rentalStartDate": "2026-12-01",
-  "rentalEndDate": "2026-12-03",
-  "quantity": 1,
-  "contactNumber": "+880...",
-  "deliveryAddress": "Dhaka",
-  "notes": ""
-}
+```bash
+npm run dev    # Development server
+npm start      # Production server
+npm test       # Run tests
 ```
 
-The backend calculates the total from the approved listing's current price,
-checks overlapping reservations, creates a pending booking, and returns a
-`checkoutUrl`. Payment is confirmed on the signed-in renter's return through
-`GET /api/bookings/checkout/:sessionId`, which retrieves the Stripe session
-server-side, and may also be confirmed by a verified Stripe webhook. Both paths
-update the booking payment status and the `payments` collection idempotently.
+### API Health Check
 
-## Frontend integration
+```http
+GET /api/health
+```
 
-Set the frontend API base URL to the deployed server origin, for example
-`http://localhost:5000/api`, and send the returned JWT as a Bearer token for
-protected requests. Public listing objects include `id`, `name`, `category`,
-`location`, `price`, `rentalType`, `image`, `availableQuantity`, and `status`.
+### Deployment
 
-## Packages
+Deploy the backend to any Node.js hosting platform. Configure the required environment variables before deployment.
 
-Express, MongoDB Node.js driver, bcryptjs, jsonwebtoken, Google Auth Library,
-Stripe, Helmet, CORS, express-rate-limit, and dotenv.
+### Frontend
+
+Connect this API with the **Fieldkit Equipment Rental Frontend** by setting the frontend API base URL to the backend URL.
