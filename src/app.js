@@ -3,8 +3,8 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const config = require("./config");
+const { connectToDatabase, getDatabase } = require("./db");
 const configRoutes = require("./routes/config");
-const { getDatabase } = require("./db");
 const authRoutes = require("./routes/auth");
 const equipmentRoutes = require("./routes/equipment");
 const favoriteRoutes = require("./routes/favorites");
@@ -51,6 +51,12 @@ app.use(cors({
     return callback(null, isAllowedOrigin(origin));
   },
 }));
+
+// Vercel can load this Express app directly without running src/server.js.
+// Ensure the database is ready before any route handler uses getDatabase().
+app.use((_request, _response, next) => {
+  connectToDatabase().then(() => next(), next);
+});
 
 app.post("/api/payments/webhook", express.raw({ type: "application/json" }), (request, response, next) => {
   Promise.resolve(handleStripeWebhook(request, response)).catch(next);
