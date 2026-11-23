@@ -13,7 +13,7 @@ const {
 } = require("../middleware");
 const { BOOKING_STATUSES, rentalUnits, toPublicDocument } = require("../domain");
 
-const { notifySafely } = require("../notifications");
+const { notifyAdminsSafely, notifySafely } = require("../notifications");
 
 const router = Router();
 let stripeClient;
@@ -213,6 +213,12 @@ router.post("/", verifyRenter, asyncHandler(async (request, response) => {
     );
     const owner = await db.collection("users").findOne({ _id: booking.ownerId });
     if (owner) await notifySafely({ sender: request.user, recipients: [owner], type: "booking_request", subject: "New rental request", message: `${request.user.name} requested ${booking.equipmentName} for ${booking.rentalStartDate} to ${booking.rentalEndDate}. The booking is waiting for your confirmation.` });
+    await notifyAdminsSafely({
+      sender: request.user,
+      type: "booking_request",
+      subject: "New booking request",
+      message: "one new booking request pending",
+    });
     return response.status(201).json({
       booking: toPublicDocument({ ...booking, checkoutSessionId: session.id }),
       checkoutUrl: session.url,
